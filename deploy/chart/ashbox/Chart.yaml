@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ashbox
+description: Sandboxes for Kubernetes services, routed by a header through Gateway API routes.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,37 @@
+# A sandbox with one fork and one laptop tunnel.
+#
+# Requests that carry "baggage: routing-key=pr-42" go to the forked "cart"
+# and to the laptop for "checkout". Requests without the key are unchanged.
+apiVersion: ashbox.dev/v1alpha1
+kind: Sandbox
+metadata:
+  name: pr-42
+spec:
+  description: Try the new cart pricing
+  ttl:
+    duration: 4h
+  forks:
+    - forkOf:
+        kind: Deployment
+        namespace: shop
+        name: cart
+      customizations:
+        images:
+          - container: app
+            image: registry.example.com/cart:pr-42
+        env:
+          - name: LOG_LEVEL
+            value: debug
+  local:
+    # The laptop side: `ashctl connect --expose checkout-ash:8080:3000/http`
+    # publishes Service checkout-ash in the k8s-tunnel namespace.
+    - name: checkout-local
+      from:
+        kind: Deployment
+        namespace: shop
+        name: checkout
+      tunnel:
+        namespace: k8s-tunnel
+        name: checkout-ash
+      mappings:
+        - port: 8080

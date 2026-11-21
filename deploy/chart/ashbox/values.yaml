@@ -1,0 +1,39 @@
+image:
+  repository: ashbox-controller
+  tag: ""          # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# More than one replica needs leader election (on by default).
+replicaCount: 1
+
+controller:
+  # Baggage entry that carries the routing key: "baggage: <key>=<sandbox>".
+  baggageKey: routing-key
+  # Mesh-specific checks: none, or istio (reports namespaces without a waypoint).
+  mesh: none
+  degradedAfter: 5m
+  recoveredAfter: 1m
+  logLevel: info
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+metrics:
+  enabled: true
+  port: 8080
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
