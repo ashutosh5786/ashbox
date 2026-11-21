@@ -63,6 +63,31 @@ func TestRender(t *testing.T) {
 	if len(r.OwnerReferences) != 1 {
 		t.Error("missing owner reference")
 	}
+
+	// The fallback rule: no match, to the baseline Service and port.
+	if len(r.Spec.Rules) != 2 {
+		t.Fatalf("rules = %d, want 2 (keyed + fallback)", len(r.Spec.Rules))
+	}
+	fb := r.Spec.Rules[1]
+	if len(fb.Matches) != 0 {
+		t.Errorf("fallback has matches: %+v", fb.Matches)
+	}
+	if b := fb.BackendRefs[0]; string(b.Name) != "cart" || *b.Port != 8080 || b.Namespace != nil {
+		t.Errorf("fallback backend = %+v", b.BackendObjectReference)
+	}
+}
+
+// For a laptop (cross-namespace) backend, the fallback still stays on the
+// baseline in the route's own namespace.
+func TestRenderFallbackStaysLocal(t *testing.T) {
+	r := Render(Target{
+		Name: "cart-m1", Namespace: "shop", Service: "cart", Port: 9090,
+		BackendNamespace: "k8s-tunnel", BackendService: "cart-ash", BackendPort: 9090,
+	}, "k", "m1")
+	fb := r.Spec.Rules[1].BackendRefs[0]
+	if string(fb.Name) != "cart" || *fb.Port != 9090 || fb.Namespace != nil {
+		t.Fatalf("fallback = %+v", fb.BackendObjectReference)
+	}
 }
 
 func TestRenderCrossNamespaceBackend(t *testing.T) {

@@ -3,8 +3,17 @@
 //
 // One HTTPRoute is attached to each baseline Service port. Every sandbox adds
 // its own route, matching only its own key, so routes of different sandboxes
-// never conflict and nobody edits the baseline's objects. Requests without a
-// matching key fall through to the baseline's catch-all route.
+// never conflict and nobody edits the baseline's objects.
+//
+// Each route also has a fallback rule with no match that sends requests to
+// the baseline Service itself. Some meshes (Istio among them) answer 404 for
+// a request that no rule matches once any route is attached to a Service, so
+// without the fallback every Service would need a hand-written catch-all
+// route. Gateway API precedence ranks a rule with header matches above one
+// without, so keyed requests still reach the sandbox. The fallback rules of
+// several sandboxes tie, and they all point at the same baseline, so the
+// tie does not matter. A baseline route with more specific rules (paths,
+// headers) still wins for its requests.
 package route
 
 import (
@@ -58,6 +67,14 @@ func Render(t Target, baggageKey, key string) *gatewayv1.HTTPRoute {
 		ns := gatewayv1.Namespace(t.BackendNamespace)
 		backend.Namespace = &ns
 	}
+	// The fallback goes to the parent Service: the normal endpoints.
+	fallbackPort := t.Port
+	fallback := gatewayv1.BackendObjectReference{
+		Group: &core,
+		Kind:  &svcKind,
+		Name:  gatewayv1.ObjectName(t.Service),
+		Port:  &fallbackPort,
+	}
 
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -75,18 +92,26 @@ func Render(t Target, baggageKey, key string) *gatewayv1.HTTPRoute {
 					Port:  &port,
 				}},
 			},
-			Rules: []gatewayv1.HTTPRouteRule{{
-				Matches: []gatewayv1.HTTPRouteMatch{{
-					Headers: []gatewayv1.HTTPHeaderMatch{{
-						Type:  &regex,
-						Name:  HeaderName,
-						Value: KeyRegex(baggageKey, key),
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches: []gatewayv1.HTTPRouteMatch{{
+						Headers: []gatewayv1.HTTPHeaderMatch{{
+							Type:  &regex,
+							Name:  HeaderName,
+							Value: KeyRegex(baggageKey, key),
+						}},
 					}},
-				}},
-				BackendRefs: []gatewayv1.HTTPBackendRef{{
-					BackendRef: gatewayv1.BackendRef{BackendObjectReference: backend},
-				}},
-			}},
+					BackendRefs: []gatewayv1.HTTPBackendRef{{
+						BackendRef: gatewayv1.BackendRef{BackendObjectReference: backend},
+					}},
+				},
+				{
+					// No match: every other request goes to the baseline.
+					BackendRefs: []gatewayv1.HTTPBackendRef{{
+						BackendRef: gatewayv1.BackendRef{BackendObjectReference: fallback},
+					}},
+				},
+			},
 		},
 	}
 }

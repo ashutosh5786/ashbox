@@ -32,6 +32,8 @@ spec:
       appProtocol: http
 ---
 # Catch-all route: requests without a matching key go to the baseline.
+# Only the hand-made fork in 30-fork-by-hand.yaml needs it. Sandboxes that
+# the controller creates do not: their routes have the same fallback rule.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

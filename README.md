@@ -24,7 +24,7 @@ The header routing was checked by hand on Istio ambient (`deploy/demo`).
 
 The `ashctl` CLI in [k8s-tunnel](https://github.com/ashutosh5786/k8s-tunnel) creates and manages sandboxes.
 
-Not built yet: metrics, published images and binaries, and tests against a real API server (envtest).
+Not built yet: metrics, prebuilt `ashctl` binaries, and tests against a real API server (envtest).
 
 ## Getting started
 
@@ -36,7 +36,7 @@ There are two parts. The cluster side is installed once per cluster, by an admin
 | k8s-tunnel server (only for laptop development) | [k8s-tunnel](https://github.com/ashutosh5786/k8s-tunnel) | cluster administrator |
 | `ashctl` CLI | [k8s-tunnel](https://github.com/ashutosh5786/k8s-tunnel) | each developer |
 
-You need `kubectl`, `helm`, Go 1.27 or later, Docker with `buildx`, and a container registry that the cluster can pull from.
+Administrators need `kubectl` and `helm`. Developers need Go 1.27 or later to install `ashctl`.
 
 ### Cluster side (once per cluster)
 
@@ -73,9 +73,9 @@ spec:
 EOF
 ```
 
-**4. Add a catch-all route to each Service that can be forked.** Requests without a key then go to the normal pods. See `deploy/demo/20-baseline.yaml` for an example.
+You do not need a catch-all route for each Service. Each sandbox route has a fallback rule that sends requests without the key to the normal Service.
 
-**5. Install the ashbox controller.** The chart uses the published image `docker.io/ashutosh5786/ashbox-controller` (amd64 and arm64):
+**4. Install the ashbox controller.** The chart uses the published image `docker.io/ashutosh5786/ashbox-controller` (amd64 and arm64):
 
 ```bash
 git clone https://github.com/ashutosh5786/ashbox && cd ashbox
@@ -88,7 +88,7 @@ helm install ashbox deploy/chart/ashbox -n ashbox-system --create-namespace \
 
 To build the image yourself: `docker buildx build --platform linux/amd64,linux/arm64 -t REGISTRY/ashbox-controller:0.1.0 --push .`, then add `--set image.repository=REGISTRY/ashbox-controller` to `helm install`.
 
-**6. For laptop development, install the k8s-tunnel server.** See "Deploy the server" in the [k8s-tunnel README](https://github.com/ashutosh5786/k8s-tunnel#deploy-the-server).
+**5. For laptop development, install the k8s-tunnel server.** See "Deploy the server" in the [k8s-tunnel README](https://github.com/ashutosh5786/k8s-tunnel#deploy-the-server).
 
 **Check:** `kubectl get pods -n ashbox-system` shows the controller Running, and `kubectl get crd sandboxes.ashbox.dev` exists.
 
@@ -97,9 +97,8 @@ To build the image yourself: `docker buildx build --platform linux/amd64,linux/a
 **1. Install `ashctl`:**
 
 ```bash
-git clone https://github.com/ashutosh5786/k8s-tunnel && cd k8s-tunnel
-go build -o bin/ ./cmd/ashctl
-# Put bin/ashctl (bin\ashctl.exe on Windows) in a folder on your PATH.
+go install github.com/ashutosh5786/k8s-tunnel/cmd/ashctl@latest
+# Installs into $(go env GOPATH)/bin. That folder must be on your PATH.
 ```
 
 **2. Fork a service with a new image:**
@@ -138,8 +137,7 @@ Your services must forward the `baggage` header on their outgoing calls (OpenTel
 
 1. The Gateway API CRDs (`HTTPRoute`, `ReferenceGrant`).
 2. A mesh that applies HTTPRoutes attached to Services (GAMMA).
-3. A catch-all route for each baseline Service. Requests without a key then go to the baseline. Some meshes do this without a route.
-4. Services that forward the `baggage` header on their outgoing calls. OpenTelemetry does this.
+3. Services that forward the `baggage` header on their outgoing calls. OpenTelemetry does this.
 
 ## How it works
 
@@ -148,7 +146,7 @@ The controller does these steps for each fork in a sandbox:
 1. It copies the baseline Deployment (or Rollout) into `{name}-{sandbox}`, with one replica, the new images, env and patch.
 2. It removes the labels that the baseline Services select on from the fork's pods. The baseline Services then never send traffic to the fork.
 3. It copies each baseline Service into `{service}-{sandbox}`, which selects only the fork's pods.
-4. It attaches an HTTPRoute to each baseline Service port. The route matches the header `baggage` with the regex `(^|.*,)\s*routing-key=<key>\s*([,;].*)?$` and sends the request to the fork Service. The regex is anchored on both sides, so a key never matches a longer key that starts with it.
+4. It attaches an HTTPRoute to each baseline Service port. The route matches the header `baggage` with the regex `(^|.*,)\s*routing-key=<key>\s*([,;].*)?$` and sends the request to the fork Service. The regex is anchored on both sides, so a key never matches a longer key that starts with it. A second rule, with no match, sends all other requests to the baseline Service. Gateway API ranks a rule with a header match above a rule without one, so keyed requests still go to the fork. Without this rule, Istio would answer 404 to requests without the key once a route is attached. A baseline route of your own with more specific rules (paths, headers) still wins for its requests.
 
 Each sandbox owns its own objects through ownerReferences. Deleting a sandbox deletes all of them. Sandboxes never edit shared objects, so many sandboxes can fork the same service at the same time. `Sandbox` is cluster-scoped, because an ownerReference cannot point across namespaces to a namespaced owner.
 
@@ -208,12 +206,12 @@ make image      # multi-architecture image
 ## Install
 
 ```bash
-helm install ashbox deploy/chart/ashbox \
-  --namespace ashbox-system --create-namespace \
-  --set image.repository=<your-registry>/ashbox-controller
+helm install ashbox deploy/chart/ashbox --namespace ashbox-system --create-namespace
 kubectl apply -f deploy/examples/sandbox.yaml
 kubectl get sandboxes
 ```
+
+Helm installs the CRD in `crds/` only on the first install. After a change to the API, apply it yourself: `kubectl apply --server-side -f deploy/chart/ashbox/crds/`.
 
 | Value | Default | Meaning |
 |--|--|--|
