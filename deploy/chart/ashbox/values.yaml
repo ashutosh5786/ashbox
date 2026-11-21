@@ -1,5 +1,7 @@
 image:
-  repository: ashbox-controller
+  # The published image (linux/amd64 and linux/arm64). Set this to your own
+  # registry if you build the image yourself.
+  repository: docker.io/ashutosh5786/ashbox-controller
   tag: ""          # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 
@@ -16,6 +18,14 @@ controller:
   degradedAfter: 5m
   recoveredAfter: 1m
   logLevel: info
+
+# Who may create sandboxes. The chart always creates the ClusterRole
+# "<release>-user"; list subjects here to bind it, for example:
+#   - kind: Group
+#     name: developers
+#     apiGroup: rbac.authorization.k8s.io
+users:
+  subjects: []
 
 serviceAccount:
   create: true

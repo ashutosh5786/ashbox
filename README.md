@@ -22,7 +22,105 @@ Early. These parts work and have tests:
 
 The header routing was checked by hand on Istio ambient (`deploy/demo`).
 
-Not built yet: metrics, `ashctl` commands, and tests against a real API server (envtest).
+The `ashctl` CLI in [k8s-tunnel](https://github.com/ashutosh5786/k8s-tunnel) creates and manages sandboxes.
+
+Not built yet: metrics, published images and binaries, and tests against a real API server (envtest).
+
+## Getting started
+
+There are two parts. The cluster side is installed once per cluster, by an administrator. The CLI side is installed by each developer.
+
+| Part | Repository | Who installs it |
+|--|--|--|
+| ashbox controller | this repository | cluster administrator |
+| k8s-tunnel server (only for laptop development) | [k8s-tunnel](https://github.com/ashutosh5786/k8s-tunnel) | cluster administrator |
+| `ashctl` CLI | [k8s-tunnel](https://github.com/ashutosh5786/k8s-tunnel) | each developer |
+
+You need `kubectl`, `helm`, Go 1.27 or later, Docker with `buildx`, and a container registry that the cluster can pull from.
+
+### Cluster side (once per cluster)
+
+**1. Gateway API CRDs.** Skip this step if the cluster has them.
+
+```bash
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml
+```
+
+**2. A mesh that supports GAMMA.** For example, Istio ambient:
+
+```bash
+helm repo add istio https://istio-release.storage.googleapis.com/charts && helm repo update
+helm install istio-base istio/base -n istio-system --create-namespace --wait
+helm install istiod istio/istiod -n istio-system --set profile=ambient --wait
+helm install istio-cni istio/cni -n istio-system --set profile=ambient --wait
+helm install ztunnel istio/ztunnel -n istio-system --wait
+```
+
+**3. Put each namespace with services to fork in the mesh.** With Istio ambient, this means a label and a waypoint. Change `shop` to your namespace:
+
+```bash
+kubectl label namespace shop istio.io/dataplane-mode=ambient istio.io/use-waypoint=waypoint
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: shop
+  labels: { istio.io/waypoint-for: all }
+spec:
+  gatewayClassName: istio-waypoint
+  listeners: [{ name: mesh, port: 15008, protocol: HBONE }]
+EOF
+```
+
+**4. Add a catch-all route to each Service that can be forked.** Requests without a key then go to the normal pods. See `deploy/demo/20-baseline.yaml` for an example.
+
+**5. Install the ashbox controller.** The chart uses the published image `docker.io/ashutosh5786/ashbox-controller` (amd64 and arm64):
+
+```bash
+git clone https://github.com/ashutosh5786/ashbox && cd ashbox
+helm install ashbox deploy/chart/ashbox -n ashbox-system --create-namespace \
+  --set controller.mesh=istio \
+  --set 'users.subjects[0].kind=Group,users.subjects[0].name=developers,users.subjects[0].apiGroup=rbac.authorization.k8s.io'
+```
+
+`users.subjects` gives a group the right to create sandboxes. Use your own group name.
+
+To build the image yourself: `docker buildx build --platform linux/amd64,linux/arm64 -t REGISTRY/ashbox-controller:0.1.0 --push .`, then add `--set image.repository=REGISTRY/ashbox-controller` to `helm install`.
+
+**6. For laptop development, install the k8s-tunnel server.** See "Deploy the server" in the [k8s-tunnel README](https://github.com/ashutosh5786/k8s-tunnel#deploy-the-server).
+
+**Check:** `kubectl get pods -n ashbox-system` shows the controller Running, and `kubectl get crd sandboxes.ashbox.dev` exists.
+
+### Developer side
+
+**1. Install `ashctl`:**
+
+```bash
+git clone https://github.com/ashutosh5786/k8s-tunnel && cd k8s-tunnel
+go build -o bin/ ./cmd/ashctl
+# Put bin/ashctl (bin\ashctl.exe on Windows) in a folder on your PATH.
+```
+
+**2. Fork a service with a new image:**
+
+```bash
+ashctl sandbox create pr-42 --fork shop/cart=app:REGISTRY/cart:pr-42 --wait
+curl -H "baggage: routing-key=pr-42" http://cart.shop:8080/    # reaches the fork
+ashctl sandbox get pr-42
+ashctl sandbox delete pr-42
+```
+
+**3. Or run the service on your laptop:**
+
+```bash
+ashctl connect
+ashctl local shop/cart --port 8080:3000     # your localhost:3000
+# Requests with "baggage: routing-key=<your user name>" for cart now reach your laptop.
+ashctl disconnect                           # also deletes the sandbox
+```
+
+Your services must forward the `baggage` header on their outgoing calls (OpenTelemetry does this). Then the key also reaches forks deeper in the call chain.
 
 ## Runs anywhere
 
@@ -97,6 +195,7 @@ kubectl get sandboxes
 | `controller.mesh` | `none` | `istio` also reports namespaces without a waypoint. |
 | `controller.degradedAfter` | `5m` | Time not ready before a fork counts as down. |
 | `controller.recoveredAfter` | `1m` | Time ready before a down fork counts as up. |
+| `users.subjects` | `[]` | Who may create sandboxes (binds ClusterRole `<release>-user`). |
 
 ## Layout
 
