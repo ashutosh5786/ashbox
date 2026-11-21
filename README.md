@@ -120,7 +120,7 @@ To keep the sandbox in a file, run `ashctl sandbox generate pr-42`. It writes a 
 ```bash
 ashctl connect
 ashctl local shop/cart --port 8080:3000     # your localhost:3000
-# Requests with "baggage: routing-key=<your user name>" for cart now reach your laptop.
+# It prints the header. Requests with that header for cart now reach your laptop.
 ashctl disconnect                           # also deletes the sandbox
 ```
 
@@ -139,7 +139,64 @@ Your services must forward the `baggage` header on their outgoing calls (OpenTel
 2. A mesh that applies HTTPRoutes attached to Services (GAMMA).
 3. Services that forward the `baggage` header on their outgoing calls. OpenTelemetry does this.
 
+## Using an existing Istio install
+
+If the cluster already has Istio, skip the mesh steps and install only the controller. ashbox does not install or change Istio. It only writes Gateway API objects.
+
+```mermaid
+flowchart TD
+  A{"Istio data plane?"} -- "ambient" --> B{"Namespace or Service has<br/>istio.io/use-waypoint?"}
+  B -- "yes (any waypoint name)" --> OK1["Works.<br/>Use --mesh=istio"]
+  B -- "no" --> NO["Does not work: ztunnel is L4<br/>and cannot read headers.<br/>Add a waypoint first."]
+  A -- "sidecars" --> OK2["Works, no waypoint needed.<br/>Use --mesh=none"]
+```
+
+Check these before you install:
+
+| Check | Command | Need |
+|--|--|--|
+| Istio version | `istioctl version` | 1.24 or later for ambient with waypoints. |
+| Gateway API CRDs | `kubectl get crd httproutes.gateway.networking.k8s.io -o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version}'` | Any v1.x. Do not replace the installed version without asking its owners. |
+| Waypoint traffic type | `kubectl get gateway -n shop -o yaml` | `istio.io/waypoint-for` is `service` (default) or `all`. With `workload`, the routes do nothing. |
+
+### Existing routes can hide the fork
+
+Gateway API ranks a path match **above** a header match. So a route of your own with a longer path wins over the sandbox key, and the keyed request goes to the baseline:
+
+```mermaid
+flowchart TD
+  Q["Request to cart: /api/x<br/>with the sandbox key"] --> P{"Does another route have<br/>a longer path match?"}
+  P -- "yes, for example your route /api to cart" --> X["Baseline. The fork is skipped."]
+  P -- "no" --> H{"Header has the key?"}
+  H -- "yes" --> F["Fork"]
+  H -- "no" --> FB["Fallback rule: baseline"]
+```
+
+Routes of your own that only match `/` are safe. Also look for these:
+
+- **VirtualServices** on a forked Service. Istio does not support a VirtualService and an HTTPRoute for the same host at the same time, and it ignores one of them without a clear error. Move the Service to HTTPRoute first.
+- **AuthorizationPolicies that select pods by label.** Fork pods do not have the labels that the Service selects on (for example `app: cart`), so such a policy does not apply to the fork. Policies on the Service, the waypoint or the ServiceAccount still apply. The fork uses the same ServiceAccount.
+
 ## How it works
+
+```mermaid
+flowchart LR
+  S["Sandbox pr-42"] -- "creates and owns" --> D["Deployment cart-pr-42<br/>1 replica, new image"]
+  S -- "creates and owns" --> SV["Service cart-pr-42<br/>selects only fork pods"]
+  S -- "creates and owns" --> R["HTTPRoute cart-pr-42"]
+  BD["Deployment cart<br/>(baseline)"] -. "copied into" .-> D
+  BS["Service cart<br/>(baseline)"] -. "copied into" .-> SV
+  R -. "attached to (parentRef)" .-> BS
+```
+
+A request then flows like this. The mesh proxy is the waypoint in Istio ambient, or the caller's sidecar:
+
+```mermaid
+flowchart LR
+  C["caller pod"] -- "GET cart:8080" --> P["mesh proxy<br/>applies the HTTPRoutes of Service cart"]
+  P -- "rule 1: baggage has the key" --> F["Service cart-pr-42<br/>fork pod"]
+  P -- "rule 2: no match (fallback)" --> B["Service cart<br/>baseline pods"]
+```
 
 The controller does these steps for each fork in a sandbox:
 
