@@ -1,11 +1,14 @@
 # A real Sandbox for the controller: forks "echo" and makes it answer
 # "fork demo2". Apply it with the controller running, then:
-#   bash deploy/demo/test.sh demo2
+#   bash deploy/demo/test.sh demo2-key demo2
 apiVersion: ashbox.dev/v1alpha1
 kind: Sandbox
 metadata:
   name: demo2
 spec:
+  # An explicit key, so the test knows it. Without it the key would be
+  # random. It cannot be changed after creation.
+  routingKey: demo2-key
   description: Demo fork created by the controller
   ttl:
     duration: 2h

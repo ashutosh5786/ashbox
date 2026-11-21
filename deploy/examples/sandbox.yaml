@@ -1,12 +1,16 @@
 # A sandbox with one fork and one laptop tunnel.
 #
-# Requests that carry "baggage: routing-key=pr-42" go to the forked "cart"
+# Requests that carry "baggage: routing-key=<key>" go to the forked "cart"
 # and to the laptop for "checkout". Requests without the key are unchanged.
+# "kubectl get sbx pr-42" shows the key.
 apiVersion: ashbox.dev/v1alpha1
 kind: Sandbox
 metadata:
   name: pr-42
 spec:
+  # The key is derived from this, so pull request 42 always gets the same
+  # key, also after the sandbox is deleted and created again. Immutable.
+  keySource: github.com/acme/shop#42
   description: Try the new cart pricing
   ttl:
     duration: 4h

@@ -75,7 +75,7 @@ In a second terminal:
 ```bash
 kubectl apply -f deploy/demo/sandbox/demo2.yaml
 kubectl get sandbox demo2 -w          # Pending, then Ready
-bash deploy/demo/test.sh demo2
+bash deploy/demo/test.sh demo2-key demo2   # routing key, then sandbox name
 kubectl delete sandbox demo2          # all its children go too
 ```
 

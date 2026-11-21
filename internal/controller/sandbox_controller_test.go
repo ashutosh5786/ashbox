@@ -83,11 +83,93 @@ func TestReconcileSetsStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := got.Status
-	if s.RoutingKey != "m1234" || s.Phase != v1alpha1.PhaseReady {
+	// No keySource or routingKey: the key comes from the UID, never the name.
+	if s.RoutingKey != v1alpha1.DeriveRoutingKey("uid:uid-M1234") || s.Phase != v1alpha1.PhaseReady {
 		t.Errorf("status = %+v", s)
 	}
 	if s.ExpiresAt == nil || !s.ExpiresAt.Time.Equal(created.Add(4*time.Hour)) {
 		t.Errorf("expiresAt = %v", s.ExpiresAt)
+	}
+}
+
+// A sandbox deleted and created again with the same keySource (for example
+// the same pull request) gets the same key, even with a new name and UID.
+func TestReconcileKeySourceGivesSameKeyAfterRecreate(t *testing.T) {
+	first := sandbox("pr-42", "")
+	first.Spec.KeySource = "github.com/acme/shop#42"
+	r, c := setup(t, created, first)
+	reconcile(t, r, "pr-42")
+	k1 := getSandbox(t, c, "pr-42").Status.RoutingKey
+
+	second := sandbox("pr-42-again", "")
+	second.Spec.KeySource = "github.com/acme/shop#42"
+	r2, c2 := setup(t, created, second)
+	reconcile(t, r2, "pr-42-again")
+	k2 := getSandbox(t, c2, "pr-42-again").Status.RoutingKey
+
+	if k1 == "" || k1 != k2 || k1 != v1alpha1.DeriveRoutingKey("github.com/acme/shop#42") {
+		t.Fatalf("keys %q and %q: want the same derived key", k1, k2)
+	}
+}
+
+func TestReconcileExplicitRoutingKey(t *testing.T) {
+	sb := sandbox("pr-42", "")
+	sb.Spec.RoutingKey = "cart-pricing"
+	r, c := setup(t, created, sb)
+	reconcile(t, r, "pr-42")
+	if k := getSandbox(t, c, "pr-42").Status.RoutingKey; k != "cart-pricing" {
+		t.Fatalf("key = %q, want cart-pricing", k)
+	}
+}
+
+// Once assigned, the key in status is kept.
+func TestReconcileKeepsAssignedKey(t *testing.T) {
+	sb := sandbox("old", "")
+	sb.Status.RoutingKey = "assigned-before"
+	r, c := setup(t, created, sb)
+	reconcile(t, r, "old")
+	if k := getSandbox(t, c, "old").Status.RoutingKey; k != "assigned-before" {
+		t.Fatalf("key = %q, want assigned-before", k)
+	}
+}
+
+// Two live sandboxes on one key: the older keeps it, the newer fails and
+// checks again later. A sandbox that is being deleted does not count.
+func TestReconcileKeyConflict(t *testing.T) {
+	older := sandbox("pr-42", "")
+	older.Spec.KeySource = "github.com/acme/shop#42"
+	newer := sandbox("pr-42-b", "")
+	newer.CreationTimestamp = metav1.NewTime(created.Add(time.Minute))
+	newer.UID = "uid-b"
+	newer.Spec.KeySource = "github.com/acme/shop#42"
+	r, c := setup(t, created.Add(time.Hour), newer, older)
+
+	res := reconcile(t, r, "pr-42-b")
+	got := getSandbox(t, c, "pr-42-b")
+	if got.Status.Phase != v1alpha1.PhaseFailed {
+		t.Fatalf("newer phase = %s, want Failed", got.Status.Phase)
+	}
+	if res.RequeueAfter != keyConflictRetry {
+		t.Errorf("requeue = %v, want %v", res.RequeueAfter, keyConflictRetry)
+	}
+
+	reconcile(t, r, "pr-42")
+	if p := getSandbox(t, c, "pr-42").Status.Phase; p == v1alpha1.PhaseFailed {
+		t.Fatalf("older sandbox lost its key")
+	}
+
+	// The older one is being deleted: the newer one takes the key.
+	o := getSandbox(t, c, "pr-42")
+	o.Finalizers = []string{"test/hold"}
+	if err := c.Update(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Delete(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	reconcile(t, r, "pr-42-b")
+	if p := getSandbox(t, c, "pr-42-b").Status.Phase; p == v1alpha1.PhaseFailed {
+		t.Fatalf("newer sandbox still Failed after the older one started deleting")
 	}
 }
 

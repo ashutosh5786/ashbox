@@ -3,9 +3,9 @@
 Sandboxes for services on Kubernetes. A sandbox runs changed copies ("forks") of some services next to the normal ones. Requests that carry the sandbox's routing key go to the forks. All other requests go to the normal services, which stay unchanged.
 
 ```
-caller ──► Service cart ──► mesh reads "baggage: routing-key=pr-42"
-                              ├── key pr-42  ──► cart-pr-42 (fork)
-                              └── no key     ──► cart       (baseline)
+caller ──► Service cart ──► mesh reads "baggage: routing-key=4wsdsbw5ewoc"
+                              ├── sandbox pr-42's key ──► cart-pr-42 (fork)
+                              └── no key              ──► cart       (baseline)
 ```
 
 With [k8s-tunnel](#local-development-with-k8s-tunnel), a sandbox can also send keyed requests to a service that runs on your laptop.
@@ -105,11 +105,16 @@ go build -o bin/ ./cmd/ashctl
 **2. Fork a service with a new image:**
 
 ```bash
-ashctl sandbox create pr-42 --fork shop/cart=app:REGISTRY/cart:pr-42 --wait
-curl -H "baggage: routing-key=pr-42" http://cart.shop:8080/    # reaches the fork
+ashctl sandbox create pr-42 --fork shop/cart=app:REGISTRY/cart:pr-42 \
+  --key-from "github.com/acme/shop#42" --wait     # prints the header to use
+curl -H "baggage: routing-key=<key>" http://cart.shop:8080/    # reaches the fork
 ashctl sandbox get pr-42
 ashctl sandbox delete pr-42
 ```
+
+`--key-from` makes the key stable: the same pull request always gets the same key. See [Routing key](#routing-key).
+
+To keep the sandbox in a file, run `ashctl sandbox generate pr-42`. It writes a commented `sandbox.yaml`. Edit it, then run `ashctl sandbox create -f sandbox.yaml`.
 
 **3. Or run the service on your laptop:**
 
@@ -143,9 +148,30 @@ The controller does these steps for each fork in a sandbox:
 1. It copies the baseline Deployment (or Rollout) into `{name}-{sandbox}`, with one replica, the new images, env and patch.
 2. It removes the labels that the baseline Services select on from the fork's pods. The baseline Services then never send traffic to the fork.
 3. It copies each baseline Service into `{service}-{sandbox}`, which selects only the fork's pods.
-4. It attaches an HTTPRoute to each baseline Service port. The route matches the header `baggage` with the regex `(^|.*,)\s*routing-key=pr-42\s*([,;].*)?$` and sends the request to the fork Service. The regex is anchored on both sides, so `pr-4` never matches `pr-42`.
+4. It attaches an HTTPRoute to each baseline Service port. The route matches the header `baggage` with the regex `(^|.*,)\s*routing-key=<key>\s*([,;].*)?$` and sends the request to the fork Service. The regex is anchored on both sides, so a key never matches a longer key that starts with it.
 
 Each sandbox owns its own objects through ownerReferences. Deleting a sandbox deletes all of them. Sandboxes never edit shared objects, so many sandboxes can fork the same service at the same time. `Sandbox` is cluster-scoped, because an ownerReference cannot point across namespaces to a namespaced owner.
+
+### Routing key
+
+The routing key is the value in `baggage: routing-key=<key>`. It is **not** the sandbox name. The controller writes it to `status.routingKey`, and it never changes after that. The spec chooses it in one of three ways:
+
+| Spec | Key | After delete and create again |
+|--|--|--|
+| `keySource: github.com/acme/shop#42` | Derived: 12 characters, `a-z` and `2-7`, from a SHA-256 hash of the source | **Same key**, because the same source always gives the same key |
+| `routingKey: cart-pricing` | Exactly this value: 8 to 32 characters, `a-z`, `0-9` and `-` | Same key |
+| neither | Derived from the sandbox UID | New key |
+
+For CI, use one `keySource` per pull request. For example, in GitHub Actions: `--key-from "github.com/${{ github.repository }}#${{ github.event.number }}"`. A redeploy of the PR then keeps the same header, so links and test settings stay valid.
+
+The API server enforces the rules with CEL in the CRD:
+- `routingKey` and `keySource` cannot be changed, added or removed after creation.
+- You cannot set both.
+- `metadata.name` is immutable in Kubernetes anyway.
+
+The controller enforces uniqueness. When two live sandboxes have the same key, the older one keeps it. The newer one goes to `Failed` ("routing key ... is already used by sandbox ..."), gets no routes, and checks again every 30 seconds. A sandbox that is being deleted does not hold its key, so you can delete a sandbox and create it again at once.
+
+The key is not a secret. Anyone who can send a request with the header reaches the fork. Do not use the key as access control.
 
 ### Status phases
 

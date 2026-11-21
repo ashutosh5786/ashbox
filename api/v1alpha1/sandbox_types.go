@@ -106,7 +106,33 @@ type TTL struct {
 }
 
 // SandboxSpec is the wanted state of a sandbox.
+//
+// The routing key never changes after creation: routingKey and keySource
+// cannot be added, removed or changed by an update.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.routingKey) == has(oldSelf.routingKey)",message="routingKey cannot be added or removed after creation"
+// +kubebuilder:validation:XValidation:rule="has(self.keySource) == has(oldSelf.keySource)",message="keySource cannot be added or removed after creation"
+// +kubebuilder:validation:XValidation:rule="!(has(self.routingKey) && has(self.keySource))",message="set routingKey or keySource, not both"
 type SandboxSpec struct {
+	// RoutingKey sets the routing key directly: 8 to 32 lower-case letters,
+	// digits and '-'. Immutable.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-]{6,30}[a-z0-9]$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="routingKey is immutable"
+	RoutingKey string `json:"routingKey,omitempty"`
+
+	// KeySource is a stable identity the routing key is derived from, such
+	// as "github.com/acme/shop#42". The same source always gives the same
+	// key, also when the sandbox is deleted and created again. Immutable.
+	//
+	// With neither routingKey nor keySource, the key is derived from the
+	// sandbox's UID: unique, but new for every sandbox.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="keySource is immutable"
+	KeySource string `json:"keySource,omitempty"`
+
 	Description string  `json:"description,omitempty"`
 	TTL         *TTL    `json:"ttl,omitempty"`
 	Forks       []Fork  `json:"forks,omitempty"`
@@ -146,7 +172,10 @@ const (
 
 // SandboxStatus is the observed state of a sandbox.
 type SandboxStatus struct {
-	Phase      Phase              `json:"phase,omitempty"`
+	Phase Phase `json:"phase,omitempty"`
+	// RoutingKey is the key requests carry to reach this sandbox:
+	// "baggage: <baggage key>=<routingKey>". Set once by the controller,
+	// then never changed.
 	RoutingKey string             `json:"routingKey,omitempty"`
 	ExpiresAt  *metav1.Time       `json:"expiresAt,omitempty"`
 	Forks      []ForkStatus       `json:"forks,omitempty"`

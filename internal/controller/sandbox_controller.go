@@ -91,11 +91,26 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
+	key := sb.EffectiveRoutingKey()
+	keyOwner, err := r.keyOwner(ctx, &sb, key)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	pr := &progress{keep: map[objKey]bool{}, waypointless: map[string]bool{}}
-	if len(sb.Name) > names.MaxNameLength {
+	switch {
+	case len(sb.Name) > names.MaxNameLength:
 		// The name is used as a label value, which is limited to 63 characters.
 		problems = append(problems, fmt.Sprintf("sandbox name longer than %d characters", names.MaxNameLength))
-	} else {
+	case keyOwner != "":
+		// Two sandboxes on one key would fight over the same requests. The
+		// older one keeps the key; this one gets no routes until the older
+		// one is gone.
+		problems = append(problems, fmt.Sprintf("routing key %q is already used by sandbox %s", key, keyOwner))
+		if err := r.prune(ctx, &sb, pr.keep); err != nil {
+			return ctrl.Result{}, err
+		}
+	default:
 		if err := r.reconcileForks(ctx, &sb, pr); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -112,7 +127,7 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	next := sb.Status.DeepCopy()
 	next.Phase = res.Phase
-	next.RoutingKey = names.RoutingKey(sb.Name)
+	next.RoutingKey = key
 	next.Forks = res.Forks
 	next.ExpiresAt = nil
 	if hasTTL {
@@ -128,12 +143,49 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	requeue := res.Requeue
+	if keyOwner != "" && (requeue == 0 || keyConflictRetry < requeue) {
+		// Check again: the older sandbox may be deleted by then.
+		requeue = keyConflictRetry
+	}
 	if hasTTL {
 		if untilExpiry := expiresAt.Sub(now); requeue == 0 || untilExpiry < requeue {
 			requeue = untilExpiry
 		}
 	}
 	return ctrl.Result{RequeueAfter: requeue}, nil
+}
+
+// keyConflictRetry is how often a sandbox that lost its routing key to an
+// older sandbox checks whether the key is free again.
+const keyConflictRetry = 30 * time.Second
+
+// keyOwner returns the name of an older, live sandbox that routes on key,
+// or "" when key is free for sb. Sandboxes that are being deleted do not
+// count, so a sandbox can be deleted and created again on the same key.
+func (r *SandboxReconciler) keyOwner(ctx context.Context, sb *v1alpha1.Sandbox, key string) (string, error) {
+	var list v1alpha1.SandboxList
+	if err := r.List(ctx, &list); err != nil {
+		return "", err
+	}
+	for i := range list.Items {
+		o := &list.Items[i]
+		if o.UID == sb.UID || !o.DeletionTimestamp.IsZero() || o.EffectiveRoutingKey() != key {
+			continue
+		}
+		if olderThan(o, sb) {
+			return o.Name, nil
+		}
+	}
+	return "", nil
+}
+
+// olderThan orders sandboxes by creation time, then by name, so that two
+// sandboxes always agree on which one is older.
+func olderThan(a, b *v1alpha1.Sandbox) bool {
+	if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
+		return a.CreationTimestamp.Before(&b.CreationTimestamp)
+	}
+	return a.Name < b.Name
 }
 
 // progress collects what one reconcile found and created.

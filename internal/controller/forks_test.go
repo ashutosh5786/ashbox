@@ -115,7 +115,9 @@ func TestForkCreatesChildren(t *testing.T) {
 	if string(rt.Spec.ParentRefs[0].Name) != "echo" || string(rt.Spec.Rules[0].BackendRefs[0].Name) != "echo-demo1" {
 		t.Errorf("route = %+v", rt.Spec)
 	}
-	if v := rt.Spec.Rules[0].Matches[0].Headers[0].Value; !strings.Contains(v, "routing-key=demo1") {
+	// The route matches the sandbox's routing key, not its name.
+	key := getSandbox(t, c, "demo1").Status.RoutingKey
+	if v := rt.Spec.Rules[0].Matches[0].Headers[0].Value; key == "" || !strings.Contains(v, "routing-key="+key+`\s`) || strings.Contains(v, "demo1") {
 		t.Errorf("route header regex = %q", v)
 	}
 

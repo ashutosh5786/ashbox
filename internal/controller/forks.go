@@ -96,7 +96,7 @@ func routeName(svc *corev1.Service, port int32, sandbox string) string {
 // HTTPRoutes and observes each fork's readiness.
 func (r *SandboxReconciler) reconcileForks(ctx context.Context, sb *v1alpha1.Sandbox, pr *progress) error {
 	owner := ownerRef(sb)
-	key := names.RoutingKey(sb.Name)
+	key := sb.EffectiveRoutingKey()
 
 	for _, f := range sb.Spec.Forks {
 		ref := f.ForkOf

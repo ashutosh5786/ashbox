@@ -5,12 +5,6 @@ import (
 	"testing"
 )
 
-func TestRoutingKey(t *testing.T) {
-	if got := RoutingKey("M1234"); got != "m1234" {
-		t.Fatalf("RoutingKey = %q, want m1234", got)
-	}
-}
-
 func TestChildShort(t *testing.T) {
 	if got := Child("cart", "m1234"); got != "cart-m1234" {
 		t.Fatalf("Child = %q", got)

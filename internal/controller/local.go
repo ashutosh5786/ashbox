@@ -19,7 +19,7 @@ import (
 // ReferenceGrant there, so the route may use it as a backend.
 func (r *SandboxReconciler) reconcileLocal(ctx context.Context, sb *v1alpha1.Sandbox, pr *progress) error {
 	owner := ownerRef(sb)
-	key := names.RoutingKey(sb.Name)
+	key := sb.EffectiveRoutingKey()
 
 	for _, l := range sb.Spec.Local {
 		labels := names.Labels(sb.Name, l.Name)

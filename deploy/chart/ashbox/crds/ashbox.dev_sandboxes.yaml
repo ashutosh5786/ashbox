@@ -57,7 +57,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: SandboxSpec is the wanted state of a sandbox.
+            description: |-
+              SandboxSpec is the wanted state of a sandbox.
+
+              The routing key never changes after creation: routingKey and keySource
+              cannot be added, removed or changed by an update.
             properties:
               description:
                 type: string
@@ -284,6 +288,20 @@ spec:
                   - forkOf
                   type: object
                 type: array
+              keySource:
+                description: |-
+                  KeySource is a stable identity the routing key is derived from, such
+                  as "github.com/acme/shop#42". The same source always gives the same
+                  key, also when the sandbox is deleted and created again. Immutable.
+
+                  With neither routingKey nor keySource, the key is derived from the
+                  sandbox's UID: unique, but new for every sandbox.
+                maxLength: 253
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: keySource is immutable
+                  rule: self == oldSelf
               local:
                 items:
                   description: |-
@@ -350,6 +368,15 @@ spec:
                   - tunnel
                   type: object
                 type: array
+              routingKey:
+                description: |-
+                  RoutingKey sets the routing key directly: 8 to 32 lower-case letters,
+                  digits and '-'. Immutable.
+                pattern: ^[a-z0-9][a-z0-9-]{6,30}[a-z0-9]$
+                type: string
+                x-kubernetes-validations:
+                - message: routingKey is immutable
+                  rule: self == oldSelf
               ttl:
                 description: TTL is how long a sandbox lives.
                 properties:
@@ -367,6 +394,13 @@ spec:
                 - duration
                 type: object
             type: object
+            x-kubernetes-validations:
+            - message: routingKey cannot be added or removed after creation
+              rule: has(self.routingKey) == has(oldSelf.routingKey)
+            - message: keySource cannot be added or removed after creation
+              rule: has(self.keySource) == has(oldSelf.keySource)
+            - message: set routingKey or keySource, not both
+              rule: '!(has(self.routingKey) && has(self.keySource))'
           status:
             description: SandboxStatus is the observed state of a sandbox.
             properties:
@@ -466,6 +500,10 @@ spec:
                 - Expired
                 type: string
               routingKey:
+                description: |-
+                  RoutingKey is the key requests carry to reach this sandbox:
+                  "baggage: <baggage key>=<routingKey>". Set once by the controller,
+                  then never changed.
                 type: string
             type: object
         type: object

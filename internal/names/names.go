@@ -13,12 +13,6 @@ import (
 // Deployments and HTTPRoutes allow more; one limit keeps all children aligned.
 const MaxNameLength = 63
 
-// RoutingKey is the key carried in the baggage header: the sandbox name in
-// lower case.
-func RoutingKey(sandbox string) string {
-	return strings.ToLower(sandbox)
-}
-
 // Child is the name of an object a sandbox creates for a workload or Service:
 // "{base}-{sandbox}". Names that would be too long are cut and end in a short
 // hash, so two long names never collide.
