@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "ashbox/api/v1alpha1"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
 )
 
 var t0 = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)

@@ -7,7 +7,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	v1alpha1 "ashbox/api/v1alpha1"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
 )
 
 func baselineTemplate() corev1.PodTemplateSpec {

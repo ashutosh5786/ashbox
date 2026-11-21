@@ -1,4 +1,4 @@
-module ashbox
+module github.com/ashutosh5786/ashbox
 
 go 1.27.4
 

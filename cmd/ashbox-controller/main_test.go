@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"ashbox/internal/controller"
+	"github.com/ashutosh5786/ashbox/internal/controller"
 )
 
 func TestParseFlagsDefaults(t *testing.T) {

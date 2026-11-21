@@ -1,0 +1,11 @@
+# A pod in the mesh to send test requests from.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: demo
+spec:
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      command: ["sleep", "infinity"]

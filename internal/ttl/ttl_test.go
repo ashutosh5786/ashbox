@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "ashbox/api/v1alpha1"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
 )
 
 func TestParse(t *testing.T) {

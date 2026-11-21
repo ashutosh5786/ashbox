@@ -9,6 +9,7 @@ k8s-tunnel (`D:\k8s-tunnel`, module `k8s-tunnel`) is an extension of ashbox. It 
 ## Rules
 
 - This is the owner's personal project. No company names in code, API groups, labels or docs. The API group is `ashbox.dev`.
+- Hosted on GitHub; module path `github.com/ashutosh5786/ashbox`, so `ashctl` (k8s-tunnel) can import `api/v1alpha1`.
 - Runnable anywhere: any cluster reached by kubeconfig, no cloud SDK; any GAMMA mesh (plain Gateway API objects); mesh-specific checks only behind `--mesh`; optional dependencies (Argo Rollouts) read as unstructured; pure Go, `CGO_ENABLED=0`, linux/amd64 and linux/arm64.
 - Every package with code has tests. Keep rendering pure and test it without a cluster; fake the Kubernetes API with controller-runtime's fake client (envtest later).
 - After changing `api/`, run `make generate`. Do not edit `zz_generated.deepcopy.go` or the CRD by hand.
@@ -26,15 +27,19 @@ k8s-tunnel (`D:\k8s-tunnel`, module `k8s-tunnel`) is an extension of ashbox. It 
 
 ## Open points
 
-- Module path is `ashbox`. If `ashctl` imports the API types from a separate repo, change it to the repo path (for example `github.com/<owner>/ashbox`) or use a `replace` directive.
 - `offsetFrom: updatedAt` needs the time of the last spec change; not tracked yet.
 - Rollouts with `spec.workloadRef` are not supported yet.
 
 ## Not built yet
 
-1. Apply forks, Services and routes in `reconcileForks`; prune removed forks.
-2. `reconcileLocal` (routes + ReferenceGrant to the k8s-tunnel Service).
-3. Istio waypoint check (`--mesh=istio`), condition `RoutesProgrammed`.
-4. Metrics (sandboxes by phase, forks ready, time to ready).
-5. `ashctl sandbox create/get/list/delete` and `ashctl local` in k8s-tunnel.
-6. envtest suite.
+1. Metrics (sandboxes by phase, forks ready, time to ready).
+2. `ashctl sandbox create/get/list/delete` and `ashctl local` in k8s-tunnel.
+3. envtest suite.
+4. Status reason `UpdateFailed` when a new image of a working fork does not roll out.
+5. Routes only for HTTP-like ports (today every Service port gets a route).
+
+## Environment notes
+
+- Local test cluster: Docker Desktop Kubernetes (kind, 2 nodes, context `docker-desktop`) with Istio ambient and Gateway API v1.7.0. Demo in `deploy/demo`.
+- The agent guard blocks all cluster writes, including `kubectl exec`, `scale` and running the controller against a cluster. The owner runs those; the agent uses `kubectl get/describe/logs`.
+- On this Windows machine `bash` is the WSL launcher; use `"C:\Program Files\Git\bin\bash.exe"`.

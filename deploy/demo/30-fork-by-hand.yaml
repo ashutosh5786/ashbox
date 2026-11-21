@@ -1,0 +1,57 @@
+# What ashbox will create for sandbox "demo1" forking "echo", written by hand.
+# The fork answers "fork demo1". Its pods drop the label "app", which the
+# baseline Service selects on, so the baseline never sends traffic to them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-demo1
+  namespace: demo
+  labels: { ashbox.dev/sandbox: demo1, ashbox.dev/fork: echo }
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: { ashbox.dev/sandbox: demo1, ashbox.dev/fork: echo }
+  template:
+    metadata:
+      labels: { team: demo, ashbox.dev/sandbox: demo1, ashbox.dev/fork: echo }
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo:1.0
+          args: ["-listen=:8080", "-text=fork demo1"]
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-demo1
+  namespace: demo
+  labels: { ashbox.dev/sandbox: demo1, ashbox.dev/fork: echo }
+spec:
+  selector: { ashbox.dev/sandbox: demo1, ashbox.dev/fork: echo }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      appProtocol: http
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo-demo1
+  namespace: demo
+  labels: { ashbox.dev/sandbox: demo1, ashbox.dev/fork: echo }
+spec:
+  parentRefs:
+    - { group: "", kind: Service, name: echo, port: 8080 }
+  rules:
+    - matches:
+        - headers:
+            - type: RegularExpression
+              name: baggage
+              value: '(^|.*,)\s*routing-key=demo1\s*([,;].*)?$'
+      backendRefs:
+        - { group: "", kind: Service, name: echo-demo1, port: 8080 }

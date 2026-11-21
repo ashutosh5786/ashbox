@@ -12,14 +12,17 @@ With [k8s-tunnel](#local-development-with-k8s-tunnel), a sandbox can also send k
 
 ## Status
 
-Skeleton. These parts work and have tests:
+Early. These parts work and have tests:
 
 - The `Sandbox` API (`ashbox.dev/v1alpha1`) and its CRD.
-- Rendering of fork Deployments and Services, and of the routes (`HTTPRoute`, `ReferenceGrant`).
-- The routing-key match, the TTL, and the status phases with their damping rules.
-- The controller: routing key, expiry date, deletion at TTL, status.
+- The controller creates, updates and removes forks (Deployment or Rollout baseline), fork Services and HTTPRoutes. It routes `local` entries to k8s-tunnel Services, with a `ReferenceGrant`.
+- Status: phases with damping, per-fork reason (for example `CrashLoopBackOff`), conditions `SpecValid` and `RoutesProgrammed` (`--mesh=istio`).
+- TTL: expiry date, and deletion when it runs out.
+- The controller never takes over an object it did not create.
 
-Not built yet: the controller does not apply forks, Services or routes yet (see the TODOs in `internal/controller`). There is also no CLI integration in `ashctl` yet.
+The header routing was checked by hand on Istio ambient (`deploy/demo`).
+
+Not built yet: metrics, `ashctl` commands, and tests against a real API server (envtest).
 
 ## Runs anywhere
 

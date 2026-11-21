@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	v1alpha1 "ashbox/api/v1alpha1"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
 )
 
 // Parse reads a duration such as "4h", "90m" or "14d". Days are 24 hours.

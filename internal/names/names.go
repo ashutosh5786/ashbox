@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	v1alpha1 "ashbox/api/v1alpha1"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
 )
 
 // MaxNameLength is the longest name a Service may have (a DNS-1035 label).

@@ -1,0 +1,45 @@
+# Baseline service "echo": answers "baseline".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: echo }
+  template:
+    metadata:
+      labels: { app: echo, team: demo }
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo:1.0
+          args: ["-listen=:8080", "-text=baseline"]
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: demo
+spec:
+  selector: { app: echo }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      appProtocol: http
+---
+# Catch-all route: requests without a matching key go to the baseline.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo
+  namespace: demo
+spec:
+  parentRefs:
+    - { group: "", kind: Service, name: echo, port: 8080 }
+  rules:
+    - backendRefs:
+        - { name: echo, port: 8080 }

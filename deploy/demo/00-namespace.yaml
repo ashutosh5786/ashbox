@@ -1,0 +1,8 @@
+# Demo namespace in Istio ambient mode, using the waypoint in 10-waypoint.yaml.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    istio.io/dataplane-mode: ambient
+    istio.io/use-waypoint: waypoint

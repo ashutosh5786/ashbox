@@ -16,9 +16,9 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	v1alpha1 "ashbox/api/v1alpha1"
-	"ashbox/internal/controller"
-	"ashbox/internal/status"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
+	"github.com/ashutosh5786/ashbox/internal/controller"
+	"github.com/ashutosh5786/ashbox/internal/status"
 )
 
 type options struct {

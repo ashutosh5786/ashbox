@@ -5,30 +5,41 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
-	v1alpha1 "ashbox/api/v1alpha1"
-	"ashbox/internal/status"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
+	"github.com/ashutosh5786/ashbox/internal/status"
 )
 
 var created = time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
 
-func setup(t *testing.T, now time.Time, sb *v1alpha1.Sandbox) (*SandboxReconciler, client.Client) {
+func setup(t *testing.T, now time.Time, sb *v1alpha1.Sandbox, objs ...client.Object) (*SandboxReconciler, client.Client) {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
+	for _, add := range []func(*runtime.Scheme) error{
+		clientgoscheme.AddToScheme, gatewayv1.Install, gatewayv1beta1.Install, v1alpha1.AddToScheme,
+	} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sb.UID == "" {
+		sb.UID = types.UID("uid-" + sb.Name)
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(sb).
-		WithStatusSubresource(&v1alpha1.Sandbox{}).
+		WithObjects(append(objs, sb)...).
+		WithStatusSubresource(&v1alpha1.Sandbox{}, &appsv1.Deployment{}).
 		Build()
 	return &SandboxReconciler{
 		Client:     c,

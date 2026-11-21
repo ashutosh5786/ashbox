@@ -3,21 +3,26 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	v1alpha1 "ashbox/api/v1alpha1"
-	"ashbox/internal/names"
-	"ashbox/internal/status"
-	"ashbox/internal/ttl"
+	v1alpha1 "github.com/ashutosh5786/ashbox/api/v1alpha1"
+	"github.com/ashutosh5786/ashbox/internal/names"
+	"github.com/ashutosh5786/ashbox/internal/status"
+	"github.com/ashutosh5786/ashbox/internal/ttl"
 )
 
 // Mesh selects mesh-specific checks. Routing itself is plain Gateway API
@@ -48,6 +53,7 @@ type SandboxReconciler struct {
 
 // +kubebuilder:rbac:groups=ashbox.dev,resources=sandboxes,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=ashbox.dev,resources=sandboxes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=ashbox.dev,resources=sandboxes/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=argoproj.io,resources=rollouts,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
@@ -69,14 +75,13 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	now := r.now()
-	invalid := false
+	var problems []string
 
 	// TODO: track the last spec change for offsetFrom: updatedAt.
 	created := sb.CreationTimestamp.Time
 	expiresAt, hasTTL, err := ttl.ExpiresAt(sb.Spec.TTL, created, created)
 	if err != nil {
-		logger.Info("invalid ttl", "error", err.Error())
-		invalid = true
+		problems = append(problems, err.Error())
 	}
 	if hasTTL && !now.Before(expiresAt) {
 		logger.Info("sandbox expired, deleting", "expiresAt", expiresAt)
@@ -86,26 +91,35 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	obs, forksInvalid, err := r.reconcileForks(ctx, &sb)
-	if err != nil {
-		return ctrl.Result{}, err
+	pr := &progress{keep: map[objKey]bool{}, waypointless: map[string]bool{}}
+	if len(sb.Name) > names.MaxNameLength {
+		// The name is used as a label value, which is limited to 63 characters.
+		problems = append(problems, fmt.Sprintf("sandbox name longer than %d characters", names.MaxNameLength))
+	} else {
+		if err := r.reconcileForks(ctx, &sb, pr); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileLocal(ctx, &sb, pr); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.prune(ctx, &sb, pr.keep); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
-	if err := r.reconcileLocal(ctx, &sb); err != nil {
-		return ctrl.Result{}, err
-	}
+	problems = append(problems, pr.problems...)
 
-	res := r.Phases.Evaluate(now, sb.Status, obs, invalid || forksInvalid)
+	res := r.Phases.Evaluate(now, sb.Status, pr.obs, len(problems) > 0)
 
 	next := sb.Status.DeepCopy()
 	next.Phase = res.Phase
 	next.RoutingKey = names.RoutingKey(sb.Name)
 	next.Forks = res.Forks
+	next.ExpiresAt = nil
 	if hasTTL {
-		t := expiresAt
-		next.ExpiresAt = toMetaTime(t)
-	} else {
-		next.ExpiresAt = nil
+		next.ExpiresAt = toMetaTime(expiresAt)
 	}
+	r.setConditions(next, sb.Generation, problems, pr.waypointless)
+
 	if !equality.Semantic.DeepEqual(&sb.Status, next) {
 		sb.Status = *next
 		if err := r.Status().Update(ctx, &sb); err != nil {
@@ -122,31 +136,58 @@ func (r *SandboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
-// reconcileForks creates or updates each fork's Deployment, Services and
-// HTTPRoutes, removes children of forks no longer in the spec, and reports
-// each fork's readiness. invalid is true when a fork can never work (unknown
-// baseline, bad patch).
-//
-// TODO: for each spec.forks[] entry:
-//  1. read the baseline (Deployment, or Rollout via fork.TemplateFromRollout);
-//  2. list Services in its namespace that select the baseline pods (fork.Selects);
-//  3. apply fork.Deployment with DropLabels = fork.DropLabels(those Services);
-//  4. apply fork.Service and one route.Render per Service port;
-//  5. with MeshIstio, set RoutesProgrammed=False/NoWaypoint when the
-//     namespace has no istio.io/use-waypoint label;
-//  6. observe readiness from the fork Deployment and its pods.
-func (r *SandboxReconciler) reconcileForks(ctx context.Context, sb *v1alpha1.Sandbox) ([]status.Observation, bool, error) {
-	return nil, false, nil
+// progress collects what one reconcile found and created.
+type progress struct {
+	obs          []status.Observation
+	problems     []string        // spec errors: the sandbox is Failed
+	keep         map[objKey]bool // children that must exist; others are pruned
+	waypointless map[string]bool // routed namespaces without a waypoint
 }
 
-// reconcileLocal routes keyed traffic for each spec.local[] baseline to the
-// Service that k8s-tunnel published for the laptop.
-//
-// TODO: for each local entry, one route.Render per baseline Service and
-// mapping (backend in the tunnel namespace), plus one
-// route.RenderReferenceGrant in the tunnel namespace.
-func (r *SandboxReconciler) reconcileLocal(ctx context.Context, sb *v1alpha1.Sandbox) error {
-	return nil
+func (p *progress) problem(format string, args ...any) {
+	p.problems = append(p.problems, fmt.Sprintf(format, args...))
+}
+
+// Condition types and reasons.
+const (
+	ConditionSpecValid = "SpecValid"
+	ReasonInvalid      = "Invalid"
+	ReasonValid        = "Valid"
+	ReasonNoWaypoint   = "NoWaypoint"
+	ReasonProgrammed   = "Programmed"
+)
+
+func (r *SandboxReconciler) setConditions(s *v1alpha1.SandboxStatus, gen int64, problems []string, waypointless map[string]bool) {
+	if len(problems) > 0 {
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type: ConditionSpecValid, Status: metav1.ConditionFalse, Reason: ReasonInvalid,
+			Message: strings.Join(problems, "; "), ObservedGeneration: gen,
+		})
+	} else {
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type: ConditionSpecValid, Status: metav1.ConditionTrue, Reason: ReasonValid, ObservedGeneration: gen,
+		})
+	}
+
+	if r.Mesh != MeshIstio {
+		meta.RemoveStatusCondition(&s.Conditions, v1alpha1.ConditionRoutesProgrammed)
+		return
+	}
+	if len(waypointless) > 0 {
+		ns := make([]string, 0, len(waypointless))
+		for n := range waypointless {
+			ns = append(ns, n)
+		}
+		sort.Strings(ns)
+		meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+			Type: v1alpha1.ConditionRoutesProgrammed, Status: metav1.ConditionFalse, Reason: ReasonNoWaypoint,
+			Message: "no waypoint in namespaces: " + strings.Join(ns, ", "), ObservedGeneration: gen,
+		})
+		return
+	}
+	meta.SetStatusCondition(&s.Conditions, metav1.Condition{
+		Type: v1alpha1.ConditionRoutesProgrammed, Status: metav1.ConditionTrue, Reason: ReasonProgrammed, ObservedGeneration: gen,
+	})
 }
 
 func (r *SandboxReconciler) now() time.Time {

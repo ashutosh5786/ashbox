@@ -1,0 +1,26 @@
+# A real Sandbox for the controller: forks "echo" and makes it answer
+# "fork demo2". Apply it with the controller running, then:
+#   bash deploy/demo/test.sh demo2
+apiVersion: ashbox.dev/v1alpha1
+kind: Sandbox
+metadata:
+  name: demo2
+spec:
+  description: Demo fork created by the controller
+  ttl:
+    duration: 2h
+  forks:
+    - forkOf:
+        kind: Deployment
+        namespace: demo
+        name: echo
+      customizations:
+        patch:
+          type: strategic
+          value: |
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: app
+                      args: ["-listen=:8080", "-text=fork demo2"]
